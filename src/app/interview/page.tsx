@@ -2,6 +2,9 @@
 "use client";
 
 import * as React from "react";
+import { useState, useEffect } from "react";
+import { SlashIcon, ChevronLeftIcon, ChevronRightIcon } from "lucide-react";
+
 import {
   ResizableHandle,
   ResizablePanel,
@@ -10,6 +13,15 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Mic } from "lucide-react";
+
+import {
+  Breadcrumb,
+  BreadcrumbItem,
+  BreadcrumbLink,
+  BreadcrumbList,
+  BreadcrumbPage,
+  BreadcrumbSeparator,
+} from "@/components/ui/breadcrumb";
 
 // TIPTAP imports:
 import { useEditor, EditorContent } from "@tiptap/react";
@@ -66,13 +78,16 @@ export default function InterviewPage() {
   const [currentFontFamily, setCurrentFontFamily] = React.useState("");
   const [currentFontSize, setCurrentFontSize] = React.useState("");
 
+  // State for current question (1-based)
+  const [currentQuestion, setCurrentQuestion] = useState<number>(1);
+
   // Initialize TipTap editor, ensuring TextStyle appears before the font extensions:
   const editor = useEditor({
     extensions: [
-      StarterKit,        // Basic formatting: bold, italic, strike, headings, lists, blockquote, codeBlock, etc.
-      Underline,         // Underline support
+      StarterKit, // Basic formatting: bold, italic, strike, headings, lists, blockquote, codeBlock, etc.
+      Underline, // Underline support
       LinkExtension.configure({ openOnClick: false }), // Link insertion
-      TextStyle,         // ── Must register textStyle mark first
+      TextStyle, // ── Must register textStyle mark first
       FontFamily.configure({
         types: ["textStyle"], // Target textStyle for font-family
       }),
@@ -138,6 +153,17 @@ export default function InterviewPage() {
     editor.commands.setContent("<p></p>");
   };
 
+  // Handlers for Next/Previous question buttons
+  const showPreviousQuestion = () => {
+    setCurrentQuestion((prev) => Math.max(prev - 1, 1));
+  };
+  const showNextQuestion = () => {
+    setCurrentQuestion((prev) => Math.min(prev + 1, 3));
+  };
+
+  // If desired: reset or load content when question changes
+  // For now, we keep the same editor content per question
+
   return (
     <div className="h-screen flex flex-col bg-black text-white">
       {/* ───────── Top Bar ───────── */}
@@ -145,11 +171,13 @@ export default function InterviewPage() {
         <h2 className="text-lg font-semibold">Case Interview Chat</h2>
       </header>
 
-      {/* ───────── Two Horizontal Resizable Panels ───────── */}
+      {/* ───────── Two‐Panel Layout (locked at 60% / 40%) ───────── */}
       <ResizablePanelGroup direction="horizontal" className="flex-1">
-        {/* ───────── Left Pane: Dark‐themed Tiptap Editor ───────── */}
+        {/* ───────── Left Pane: fixed at 60% ───────── */}
         <ResizablePanel
-          defaultSize={40}
+          defaultSize={60}
+          minSize={60}
+          maxSize={60}
           className="border-r border-gray-500 bg-black flex flex-col"
         >
           {/* ─── Toolbar ─── */}
@@ -241,8 +269,7 @@ export default function InterviewPage() {
               ―
             </button>
 
-            {/* ── Clear Formatting ── */}
-            {/* This Clear button now launches a confirmation dialog before wiping the editor. */}
+            {/* ── Clear Formatting (with confirmation) ── */}
             <AlertDialog>
               <AlertDialogTrigger asChild>
                 <button className="ml-auto px-4 py-2 rounded bg-gray-800 text-white hover:bg-gray-700">
@@ -255,7 +282,8 @@ export default function InterviewPage() {
                     Clear All Notes?
                   </AlertDialogTitle>
                   <AlertDialogDescription className="mt-2 text-gray-300">
-                    This will erase everything in your notepad. This action cannot be undone.
+                    This will erase everything in your notepad. This action
+                    cannot be undone.
                   </AlertDialogDescription>
                 </AlertDialogHeader>
                 <AlertDialogFooter className="mt-6 flex justify-end space-x-3">
@@ -277,21 +305,110 @@ export default function InterviewPage() {
             </AlertDialog>
           </div>
 
+          {/* ─── Breadcrumb (on top of editor) ─── */}
+          <div className="bg-gray-800 border-b border-gray-700 p-3">
+            <Breadcrumb>
+              <BreadcrumbList>
+                <BreadcrumbItem>
+                  <BreadcrumbLink asChild>
+                    <button
+                      onClick={() => setCurrentQuestion(1)}
+                      className={`px-1 ${
+                        currentQuestion === 1
+                          ? "text-white font-medium"
+                          : "text-gray-300 hover:text-white"
+                      }`}
+                    >
+                      Question 1
+                    </button>
+                  </BreadcrumbLink>
+                </BreadcrumbItem>
+                <BreadcrumbSeparator>
+                  <SlashIcon className="text-gray-500" />
+                </BreadcrumbSeparator>
+                <BreadcrumbItem>
+                  <BreadcrumbLink asChild>
+                    <button
+                      onClick={() => setCurrentQuestion(2)}
+                      className={`px-1 ${
+                        currentQuestion === 2
+                          ? "text-white font-medium"
+                          : "text-gray-300 hover:text-white"
+                      }`}
+                    >
+                      Question 2
+                    </button>
+                  </BreadcrumbLink>
+                </BreadcrumbItem>
+                <BreadcrumbSeparator>
+                  <SlashIcon className="text-gray-500" />
+                </BreadcrumbSeparator>
+                <BreadcrumbItem>
+                  <BreadcrumbLink asChild>
+                    <button
+                      onClick={() => setCurrentQuestion(3)}
+                      className={`px-1 ${
+                        currentQuestion === 3
+                          ? "text-white font-medium"
+                          : "text-gray-300 hover:text-white"
+                      }`}
+                    >
+                      Question 3
+                    </button>
+                  </BreadcrumbLink>
+                </BreadcrumbItem>
+              </BreadcrumbList>
+            </Breadcrumb>
+          </div>
+
           {/* ─── Editor Content Area ─── */}
-          <div className="flex-1 overflow-auto p-2">
+          <div className="relative flex-1 overflow-auto p-2">
             {editor ? (
               <EditorContent editor={editor} />
             ) : (
               <div className="text-gray-500">Loading editor…</div>
             )}
+
+            {/* ─── Prev/Next Buttons (bottom-right) ─── */}
+            <div className="absolute bottom-4 right-4 flex space-x-2">
+              <button
+                onClick={showPreviousQuestion}
+                disabled={currentQuestion === 1}
+                className={`flex items-center px-3 py-1 rounded ${
+                  currentQuestion === 1
+                    ? "bg-gray-700 text-gray-400 cursor-not-allowed"
+                    : "bg-gray-600 hover:bg-gray-500 text-white"
+                }`}
+              >
+                <ChevronLeftIcon className="w-4 h-4 mr-1" />
+                Prev
+              </button>
+              <button
+                onClick={showNextQuestion}
+                disabled={currentQuestion === 3}
+                className={`flex items-center px-3 py-1 rounded ${
+                  currentQuestion === 3
+                    ? "bg-gray-700 text-gray-400 cursor-not-allowed"
+                    : "bg-gray-600 hover:bg-gray-500 text-white"
+                }`}
+              >
+                Next
+                <ChevronRightIcon className="w-4 h-4 ml-1" />
+              </button>
+            </div>
           </div>
         </ResizablePanel>
 
-        {/* ───────── Divider / Handle ───────── */}
-        <ResizableHandle withHandle />
+        {/* ───────── Divider / Handle (non‐movable) ───────── */}
+        <ResizableHandle />
 
-        {/* ───────── Right Pane: Dummy Chat ───────── */}
-        <ResizablePanel defaultSize={60} className="flex flex-col bg-black">
+        {/* ───────── Right Pane: fixed at 40% ───────── */}
+        <ResizablePanel
+          defaultSize={40}
+          minSize={40}
+          maxSize={40}
+          className="flex flex-col bg-black"
+        >
           {/* Chat History */}
           <div className="flex-1 p-6 overflow-y-auto space-y-4">
             <div className="flex flex-col space-y-2">

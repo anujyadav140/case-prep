@@ -90,6 +90,11 @@ export default function InterviewPage() {
   const [showFollowUpButton, setShowFollowUpButton] = useState(false);
 
 
+  // Timer state
+  const [timeLeft, setTimeLeft] = useState<number>(15 * 60); // 15 minutes in seconds
+  const [timerActive, setTimerActive] = useState<boolean>(false);
+
+
   // State to track which font family/size is active:
   const [currentFontFamily, setCurrentFontFamily] = React.useState("");
   const [currentFontSize, setCurrentFontSize] = React.useState("");
@@ -128,6 +133,27 @@ export default function InterviewPage() {
   }, [router]);
 
 
+  // Timer countdown effect
+  useEffect(() => {
+    if (!timerActive || timeLeft <= 0) {
+      if (timeLeft <= 0 && timerActive) {
+        setTimerActive(false); // Stop timer when time is up
+        // Optionally, add a message to chat or trigger other actions
+        setChatMessages(prev => [...prev, { sender: "ai", text: "Follow-up time has ended."}]);
+        if (wsClient && wsClient.readyState === WebSocket.OPEN) {
+            // wsClient.close(1000, "Timer ended"); // Optionally close WS
+        }
+      }
+      return;
+    }
+
+    const intervalId = setInterval(() => {
+      setTimeLeft((prevTime) => prevTime - 1);
+    }, 1000);
+
+    return () => clearInterval(intervalId);
+  }, [timerActive, timeLeft, wsClient]); // Added wsClient to dependencies for optional close
+
   // Scroll to bottom of chat messages when new messages are added
   useEffect(() => {
     if (chatContainerRef.current) {
@@ -144,7 +170,7 @@ export default function InterviewPage() {
 
     wsClient.onopen = () => {
       console.log("WebSocket connected for follow-up.");
-      setChatMessages(prev => [...prev, { sender: "ai", text: "Follow-up Q&A session started. Ask your questions."}]);
+      setChatMessages(prev => [...prev, { sender: "ai", text: "You can now ask follow-up questions about the case."}]);
       setIsSendingMessage(false); // Enable input
     };
 
@@ -231,6 +257,13 @@ export default function InterviewPage() {
     },
   });
 
+  const formatTime = (totalSeconds: number): string => {
+    const hours = Math.floor(totalSeconds / 3600);
+    const minutes = Math.floor((totalSeconds % 3600) / 60);
+    const seconds = totalSeconds % 60;
+    return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+  };
+
   // Handler for "Send" button in chat:
   const handleStartFollowUp = () => {
     if (!currentCaseId || !lastAiResponseId) {
@@ -261,6 +294,8 @@ export default function InterviewPage() {
     setShowFollowUpButton(false); // Hide button once follow-up starts
     setIsSendingMessage(true); // Disable input until connection is established
     setError(null);
+    setTimeLeft(15 * 60); // Reset and start timer
+    setTimerActive(true);
   };
 
 
@@ -335,8 +370,18 @@ export default function InterviewPage() {
   return (
     <div className="h-screen flex flex-col bg-black text-white">
       {/* ───────── Top Bar ───────── */}
-      <header className="w-full bg-black border-b border-gray-500 p-4">
+      <header className="w-full bg-black border-b border-gray-500 p-4 flex justify-between items-center">
         <h2 className="text-lg font-semibold">Case Interview Chat</h2>
+        {timerActive && (
+          <div className="text-right">
+            <span className="text-sm text-gray-400">Follow Up Timer</span>
+            <div
+              className={`text-lg font-semibold ${timeLeft < 5 * 60 ? 'text-red-500' : 'text-green-500'}`}
+            >
+              {formatTime(timeLeft)}
+            </div>
+          </div>
+        )}
       </header>
 
       {/* ───────── Two‐Panel Layout (locked at 60% / 40%) ───────── */}

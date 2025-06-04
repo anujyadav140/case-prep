@@ -2,8 +2,10 @@
 "use client";
 
 import * as React from "react";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react"; // Added useRef
+import { useRouter } from "next/navigation"; // Added useRouter
 import { SlashIcon, ChevronLeftIcon, ChevronRightIcon } from "lucide-react";
+import { initiateChatSession, followUpChat, AIResponseMessage } from "@/lib/api"; // Import API functions
 
 import {
   ResizableHandle,
@@ -71,15 +73,62 @@ const FONT_SIZES = [
 ];
 
 export default function InterviewPage() {
+  const router = useRouter();
   // State for the chat input:
   const [inputValue, setInputValue] = React.useState("");
+  const [currentCaseId, setCurrentCaseId] = useState<string | null>(null);
+  const [chatMessages, setChatMessages] = useState<Array<{ sender: "user" | "ai"; text: string; id?: string }>>([]);
+  const [isLoadingInitialMessage, setIsLoadingInitialMessage] = useState(true);
+  const [isSendingMessage, setIsSendingMessage] = useState(false); // To disable input while sending
+  const [error, setError] = useState<string | null>(null);
+  const [lastAiResponseId, setLastAiResponseId] = useState<string | undefined>(undefined);
+  const chatContainerRef = useRef<HTMLDivElement>(null);
+
 
   // State to track which font family/size is active:
   const [currentFontFamily, setCurrentFontFamily] = React.useState("");
   const [currentFontSize, setCurrentFontSize] = React.useState("");
 
-  // State for current question (1-based)
+  // State for current question (1-based) - This might be driven by AI responses later
   const [currentQuestion, setCurrentQuestion] = useState<number>(1);
+
+
+  useEffect(() => {
+    const caseId = localStorage.getItem("selectedCaseId");
+    if (caseId) {
+      setCurrentCaseId(caseId);
+      const fetchInitialMessage = async () => {
+        try {
+          setIsLoadingInitialMessage(true);
+          setError(null);
+          const initialResponse = await initiateChatSession(caseId);
+          setChatMessages([{ sender: "ai", text: initialResponse.ai_message, id: initialResponse.response_id }]);
+          setLastAiResponseId(initialResponse.response_id);
+        } catch (err) {
+          setError(err instanceof Error ? err.message : "Failed to load initial chat message.");
+          setChatMessages([]); // Clear messages on error
+        } finally {
+          setIsLoadingInitialMessage(false);
+        }
+      };
+      fetchInitialMessage();
+    } else {
+      // Handle case where no caseId is found, e.g., redirect or show error
+      setError("No case selected. Please go back and select a case.");
+      setIsLoadingInitialMessage(false);
+      // Optionally redirect:
+      // router.push('/');
+    }
+  }, [router]);
+
+
+  // Scroll to bottom of chat messages when new messages are added
+  useEffect(() => {
+    if (chatContainerRef.current) {
+      chatContainerRef.current.scrollTop = chatContainerRef.current.scrollHeight;
+    }
+  }, [chatMessages]);
+
 
   // Initialize TipTap editor, ensuring TextStyle appears before the font extensions:
   const editor = useEditor({
@@ -112,10 +161,58 @@ export default function InterviewPage() {
   });
 
   // Handler for "Send" button in chat:
-  const onSend = () => {
-    if (inputValue.trim() === "") return;
-    // (Hook up to your backend or state management here)
-    setInputValue("");
+  const onSend = async () => {
+    if (inputValue.trim() === "" || !currentCaseId || isSendingMessage) return;
+
+    const userMessageText = inputValue.trim();
+    // Add user message to chat immediately for responsiveness
+    setChatMessages((prevMessages) => [...prevMessages, { sender: "user", text: userMessageText }]);
+    setInputValue(""); // Clear input
+    setIsSendingMessage(true);
+    setError(null);
+
+    try {
+      if (!lastAiResponseId && chatMessages.find(msg => msg.sender === 'ai' && msg.id)) {
+        // Attempt to recover lastAiResponseId if it's missing but an AI message with ID exists
+        const lastAiMsgWithId = [...chatMessages].reverse().find(msg => msg.sender === 'ai' && msg.id);
+        if (lastAiMsgWithId && lastAiMsgWithId.id) {
+            setLastAiResponseId(lastAiMsgWithId.id);
+            // console.warn("Recovered lastAiResponseId from chat history.");
+        }
+      }
+      
+      if (!lastAiResponseId) {
+        // This case should ideally not happen if initial chat was successful
+        // and recovery above failed.
+        console.error("No last AI response ID found. Cannot send follow-up.");
+        setError("Cannot send message: AI context is missing. Please refresh or try again.");
+        // Remove the prematurely added user message if send fails early
+        setChatMessages(prev => prev.slice(0, -1));
+        setIsSendingMessage(false);
+        return;
+      }
+
+      const aiResponse = await followUpChat({
+        case_id: currentCaseId,
+        response_id: lastAiResponseId, // Send the ID of the last AI message
+        user_message: userMessageText,
+      });
+
+      setChatMessages((prevMessages) => [
+        ...prevMessages,
+        { sender: "ai", text: aiResponse.ai_message, id: aiResponse.response_id },
+      ]);
+      setLastAiResponseId(aiResponse.response_id); // Update with the new response ID
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : "Failed to send message or get AI response.";
+      setError(errorMessage);
+      // Optionally, add an error message to the chat UI or allow resend
+      // For now, we keep the user's message in the chat and show a general error.
+      // If the error is critical, one might remove the user's message or add a specific error bubble.
+       setChatMessages(prev => [...prev, {sender: "ai", text: `Error: ${errorMessage}. Please try again.`}]);
+    } finally {
+      setIsSendingMessage(false);
+    }
   };
 
   // When the user selects a font family from the dropdown:
@@ -410,30 +507,29 @@ export default function InterviewPage() {
           className="flex flex-col bg-black"
         >
           {/* Chat History */}
-          <div className="flex-1 p-6 overflow-y-auto space-y-4">
+          <div ref={chatContainerRef} className="flex-1 p-6 overflow-y-auto space-y-4">
+            {isLoadingInitialMessage && <div className="text-center text-gray-400">Loading chat...</div>}
+            {error && <div className="text-center text-red-500 p-2 bg-red-900 rounded">{error}</div>}
+            {!isLoadingInitialMessage && !error && chatMessages.length === 0 && (
+              <div className="text-center text-gray-400">No messages yet. The AI will start the conversation.</div>
+            )}
             <div className="flex flex-col space-y-2">
-              {/* Interviewer bubble (left) */}
-              <div className="self-start bg-gray-800 px-4 py-2 rounded-lg shadow-sm max-w-xs">
-                <span className="text-white">
-                  Hi there! Before we begin, do you have any clarifying
-                  questions about the case?
-                </span>
-              </div>
-
-              {/* Candidate bubble (right) */}
-              <div className="self-end bg-gray-700 px-4 py-2 rounded-lg shadow-sm max-w-xs">
-                <span className="text-white">No, I’m ready to dive in.</span>
-              </div>
-
-              {/* Interviewer bubble (left) */}
-              <div className="self-start bg-gray-800 px-4 py-2 rounded-lg shadow-sm max-w-xs">
-                <span className="text-white">
-                  Great. Let’s start by estimating the market size. How would
-                  you approach that?
-                </span>
-              </div>
-
-              {/* Add more bubbles or map from state as needed */}
+              {chatMessages.map((msg, index) => (
+                <div
+                  key={index}
+                  className={`flex ${msg.sender === "user" ? "justify-end" : "justify-start"}`}
+                >
+                  <div
+                    className={`px-4 py-2 rounded-lg shadow-sm max-w-xs md:max-w-md lg:max-w-lg ${
+                      msg.sender === "user"
+                        ? "bg-gray-700 text-white self-end"
+                        : "bg-gray-800 text-white self-start"
+                    }`}
+                  >
+                    <span className="text-white whitespace-pre-wrap">{msg.text}</span>
+                  </div>
+                </div>
+              ))}
             </div>
           </div>
 
@@ -453,12 +549,13 @@ export default function InterviewPage() {
             <Input
               value={inputValue}
               onChange={(e) => setInputValue(e.target.value)}
-              placeholder="Type your response..."
+              placeholder={isSendingMessage ? "Sending..." : "Type your response..."}
               className="flex-1 bg-gray-900 text-white placeholder-gray-500 focus:ring-blue-500"
+              disabled={isSendingMessage || isLoadingInitialMessage || (!currentCaseId && !error)}
               onKeyDown={(e) => {
-                if (e.key === "Enter") {
+                if (e.key === "Enter" && !e.shiftKey) { // Send on Enter, allow Shift+Enter for new line
                   e.preventDefault();
-                  onSend();
+                  if (!isSendingMessage) onSend();
                 }
               }}
             />
@@ -468,8 +565,9 @@ export default function InterviewPage() {
               variant="default"
               onClick={onSend}
               className="bg-gray-600 hover:bg-gray-500 text-white"
+              disabled={isSendingMessage || isLoadingInitialMessage || !currentCaseId || (!!error && chatMessages.length === 0)}
             >
-              Send
+              {isSendingMessage ? "Sending..." : "Send"}
             </Button>
           </div>
         </ResizablePanel>

@@ -20,89 +20,30 @@ import {
   CarouselNext,
 } from "@/components/ui/carousel";
 import { Search, Upload } from "lucide-react";
-
-interface CaseModel {
-  name: string;
-  company: string;
-  source: string;
-  url: string;
-  description: {
-    client_name: string;
-    client_goal: string;
-    client_description: string;
-    situation_description: string;
-  };
-}
-
-// Replace or augment this static array with a real API call if needed:
-const cases: CaseModel[] = [
-  {
-    name: "Practice Case",
-    company: "Beautify",
-    source: "McKinsey Study",
-    url: "https://www.mckinsey.com/careers/interviewing/beautify",
-    description: {
-      client_name: "Beautify",
-      client_goal:
-        "Our client is Beautify. Beautify has approached McKinsey for help with exploring new ways to approach its customers.",
-      client_description:
-        "Beautify is a global prestige cosmetics company operating in luxury department stores and online. They rely on in‐store beauty consultants for personalized engagement. With the shift towards digital, many stores are underused and consultants have idle capacity.",
-      situation_description:
-        "Beautify’s leadership asked us to assess the profitability of training beauty consultants to sell virtually through social media and their own e‐commerce pages.",
-    },
-  },
-  {
-    name: "GreenTech Growth",
-    company: "GreenTech",
-    source: "BCG Internal",
-    url: "https://www.bcg.com/insights/greentech-growth",
-    description: {
-      client_name: "GreenTech",
-      client_goal:
-        "GreenTech wants to expand its portfolio of renewable energy solutions into emerging markets while maintaining cost leadership.",
-      client_description:
-        "GreenTech manufactures solar panels and wind turbines. They currently serve North America and Europe but see untapped demand in Asia-Pacific and Africa. Local regulations and infrastructure pose complexity.",
-      situation_description:
-        "The client asked us to develop a market‐entry strategy and cost optimization plan to achieve 15% market share in new regions within three years.",
-    },
-  },
-  {
-    name: "Foodie App Launch",
-    company: "Foodie",
-    source: "Deloitte Report",
-    url: "https://www.deloitte.com/foodie-app-launch",
-    description: {
-      client_name: "Foodie",
-      client_goal:
-        "Foodie aims to launch a mobile app connecting home chefs with local customers for on‐demand meal delivery.",
-      client_description:
-        "Foodie is a startup that wants to disrupt the restaurant industry by enabling peer‐to‐peer meal experiences. They have MVP in San Francisco and want to scale nationally.",
-      situation_description:
-        "They engaged us to refine their business model, forecast user adoption, and design incentive structures for early adopters.",
-    },
-  },
-  {
-    name: "TravelX Revamp",
-    company: "TravelX",
-    source: "PwC Analysis",
-    url: "https://www.pwc.com/travelx-revamp",
-    description: {
-      client_name: "TravelX",
-      client_goal:
-        "TravelX needs to modernize its legacy booking platform to improve user experience and reduce operational costs.",
-      client_description:
-        "TravelX is an established online travel agency with millions of annual bookings. Their current monolithic system causes slow load times and high maintenance overhead.",
-      situation_description:
-        "They requested our help to architect a microservices-based platform, estimate ROI, and plan a phased migration with minimal downtime.",
-    },
-  },
-];
+import { getCases, Case as CaseModel } from "@/lib/api"; // Import CaseModel from api.ts
 
 export default function CasePage() {
   const router = useRouter();
   const [open, setOpen] = React.useState(false);
   const [selectedCase, setSelectedCase] = React.useState<CaseModel | null>(null);
   const [searchOpen, setSearchOpen] = React.useState(false);
+  const [cases, setCases] = React.useState<CaseModel[]>([]);
+  const [loading, setLoading] = React.useState(true);
+  const [error, setError] = React.useState<string | null>(null);
+
+  React.useEffect(() => {
+    const fetchCases = async () => {
+      try {
+        const fetchedCases = await getCases();
+        setCases(fetchedCases);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "An unknown error occurred");
+      } finally {
+        setLoading(false);
+      }
+    };
+    fetchCases();
+  }, []);
 
   const openDialog = (caseItem: CaseModel) => {
     setSelectedCase(caseItem);
@@ -111,10 +52,20 @@ export default function CasePage() {
 
   // ⇒ Navigate to "/interview" when user clicks “Proceed”
   const proceed = () => {
-    // You might store the selectedCase in localStorage or a React context
-    // so that /interview can read it. For now, we’ll do a simple push:
-    router.push("/interview");
+    if (selectedCase) {
+      // Store selected case ID in localStorage to pass to the interview page
+      localStorage.setItem("selectedCaseId", selectedCase.id);
+      router.push("/interview");
+    }
   };
+
+  if (loading) {
+    return <div className="flex justify-center items-center h-screen bg-black text-white">Loading cases...</div>;
+  }
+
+  if (error) {
+    return <div className="flex justify-center items-center h-screen bg-black text-white">Error: {error}</div>;
+  }
 
   return (
     <>
@@ -163,7 +114,7 @@ export default function CasePage() {
                     setSearchOpen(false);
                   }}
                 >
-                  {caseItem.company}
+                  {caseItem.name} {/* Display case name instead of company */}
                 </li>
               ))}
             </ul>
@@ -185,7 +136,7 @@ export default function CasePage() {
         <Carousel className="w-full max-w-5xl">
           <CarouselContent className="-ml-1">
             {cases.map((caseItem) => (
-              <CarouselItem key={caseItem.name} className="pl-4 basis-1/4">
+              <CarouselItem key={caseItem.id} className="pl-4 basis-1/4"> {/* Use caseItem.id as key */}
                 <div
                   onClick={() => openDialog(caseItem)}
                   className="cursor-pointer"
@@ -193,10 +144,12 @@ export default function CasePage() {
                   <Card className="bg-black border border-gray-500">
                     <CardContent className="p-6 h-96 flex flex-col justify-center">
                       <h3 className="text-2xl font-semibold text-white">
-                        {caseItem.company}
+                        {caseItem.name} {/* Display case name */}
                       </h3>
                       <p className="mt-2 text-base text-gray-400">
-                        {caseItem.description.client_description}
+                        {/* Ensure description fields match CaseModel from api.ts */}
+                        Client: {caseItem.description.client_name} <br />
+                        Goal: {caseItem.description.client_goal}
                       </p>
                     </CardContent>
                   </Card>

@@ -43,17 +43,5 @@ export const initiateChatSession = async (caseId: string): Promise<AIResponseMes
   return res.json();
 };
 
-export const followUpChat = async (payload: FollowUpChatPayload): Promise<AIResponseMessage> => {
-  const res = await fetch(`${API_BASE_URL}/chat/follow_up`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(payload),
-  });
-  if (!res.ok) {
-    const errorData = await res.json().catch(() => ({ detail: "Failed to send message" }));
-    throw new Error(errorData.detail || "Failed to send message");
-  }
-  return res.json();
-};
+// The followUpChat function is removed as communication will now be via WebSockets.
+// WebSocket connection and message handling will be managed directly in the component.

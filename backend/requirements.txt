@@ -4,4 +4,5 @@ openai==1.79.0
 pydantic==2.11.4
 python-dotenv==1.1.0
 PyYAML==6.0.2
-PyYAML==6.0.2
+websockets>=10.0 # For WebSocket support
+# uvicorn[standard] also provides this, but making websockets explicit is good.

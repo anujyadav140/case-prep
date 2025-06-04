@@ -5,7 +5,7 @@ import * as React from "react";
 import { useState, useEffect, useRef } from "react"; // Added useRef
 import { useRouter } from "next/navigation"; // Added useRouter
 import { SlashIcon, ChevronLeftIcon, ChevronRightIcon } from "lucide-react";
-import { initiateChatSession, followUpChat, AIResponseMessage } from "@/lib/api"; // Import API functions
+import { initiateChatSession, AIResponseMessage } from "@/lib/api"; // followUpChat removed
 
 import {
   ResizableHandle,
@@ -84,6 +84,11 @@ export default function InterviewPage() {
   const [lastAiResponseId, setLastAiResponseId] = useState<string | undefined>(undefined);
   const chatContainerRef = useRef<HTMLDivElement>(null);
 
+  // WebSocket related state
+  const [wsClient, setWsClient] = useState<WebSocket | null>(null);
+  const [isFollowUpMode, setIsFollowUpMode] = useState(false);
+  const [showFollowUpButton, setShowFollowUpButton] = useState(false);
+
 
   // State to track which font family/size is active:
   const [currentFontFamily, setCurrentFontFamily] = React.useState("");
@@ -104,6 +109,7 @@ export default function InterviewPage() {
           const initialResponse = await initiateChatSession(caseId);
           setChatMessages([{ sender: "ai", text: initialResponse.ai_message, id: initialResponse.response_id }]);
           setLastAiResponseId(initialResponse.response_id);
+          setShowFollowUpButton(true); // Show button after initial message
         } catch (err) {
           setError(err instanceof Error ? err.message : "Failed to load initial chat message.");
           setChatMessages([]); // Clear messages on error
@@ -128,6 +134,71 @@ export default function InterviewPage() {
       chatContainerRef.current.scrollTop = chatContainerRef.current.scrollHeight;
     }
   }, [chatMessages]);
+
+
+  // Effect for WebSocket event handlers
+  useEffect(() => {
+    if (!wsClient) {
+      return;
+    }
+
+    wsClient.onopen = () => {
+      console.log("WebSocket connected for follow-up.");
+      setChatMessages(prev => [...prev, { sender: "ai", text: "Follow-up Q&A session started. Ask your questions."}]);
+      setIsSendingMessage(false); // Enable input
+    };
+
+    wsClient.onmessage = (event) => {
+      setIsSendingMessage(false); // Re-enable input after receiving a message
+      try {
+        const data = JSON.parse(event.data);
+        if (data.error) {
+          console.error("WebSocket message error:", data.error);
+          setError(data.error);
+          setChatMessages(prev => [...prev, { sender: "ai", text: `Error: ${data.error}` }]);
+        } else {
+          setChatMessages(prev => [...prev, { sender: "ai", text: data.ai_message, id: data.response_id }]);
+          setLastAiResponseId(data.response_id); // Update lastAiResponseId with the new one from WebSocket
+        }
+      } catch (e) {
+        console.error("Failed to parse WebSocket message or unexpected format:", event.data, e);
+        setError("Received malformed message from server.");
+        setChatMessages(prev => [...prev, { sender: "ai", text: "Received an unreadable message from the server." }]);
+      }
+    };
+
+    wsClient.onerror = (errorEvent) => {
+      console.error("WebSocket error:", errorEvent);
+      setError("WebSocket connection error. Please try starting the follow-up session again.");
+      setChatMessages(prev => [...prev, { sender: "ai", text: "Connection error during follow-up. Session ended."}]);
+      setIsFollowUpMode(false);
+      setIsSendingMessage(false);
+      setWsClient(null);
+      setShowFollowUpButton(true);
+    };
+
+    wsClient.onclose = (closeEvent) => {
+      console.log("WebSocket disconnected:", closeEvent.reason, closeEvent.code);
+      // Avoid duplicate "session ended" if it was due to an error handled by onerror
+      if (!error && isFollowUpMode) {
+         setChatMessages(prev => [...prev, { sender: "ai", text: "Follow-up Q&A session ended."}]);
+      }
+      setIsFollowUpMode(false);
+      setIsSendingMessage(false);
+      setWsClient(null);
+      // Only show follow up button if closure was unexpected or error
+      if (closeEvent.code !== 1000 && closeEvent.code !== 1005) { // 1000 = Normal Closure, 1005 = No Status Recvd
+        setShowFollowUpButton(true);
+      }
+    };
+
+    return () => {
+      if (wsClient && wsClient.readyState === WebSocket.OPEN) {
+        wsClient.close(1000, "Client navigating away or component unmounting");
+      }
+      // setWsClient(null); // Already handled in onclose/onerror
+    };
+  }, [wsClient, error, isFollowUpMode]); // Dependencies for the WebSocket effect
 
 
   // Initialize TipTap editor, ensuring TextStyle appears before the font extensions:
@@ -161,57 +232,57 @@ export default function InterviewPage() {
   });
 
   // Handler for "Send" button in chat:
-  const onSend = async () => {
-    if (inputValue.trim() === "" || !currentCaseId || isSendingMessage) return;
-
-    const userMessageText = inputValue.trim();
-    // Add user message to chat immediately for responsiveness
-    setChatMessages((prevMessages) => [...prevMessages, { sender: "user", text: userMessageText }]);
-    setInputValue(""); // Clear input
-    setIsSendingMessage(true);
-    setError(null);
-
-    try {
-      if (!lastAiResponseId && chatMessages.find(msg => msg.sender === 'ai' && msg.id)) {
-        // Attempt to recover lastAiResponseId if it's missing but an AI message with ID exists
-        const lastAiMsgWithId = [...chatMessages].reverse().find(msg => msg.sender === 'ai' && msg.id);
-        if (lastAiMsgWithId && lastAiMsgWithId.id) {
-            setLastAiResponseId(lastAiMsgWithId.id);
-            // console.warn("Recovered lastAiResponseId from chat history.");
-        }
-      }
-      
-      if (!lastAiResponseId) {
-        // This case should ideally not happen if initial chat was successful
-        // and recovery above failed.
-        console.error("No last AI response ID found. Cannot send follow-up.");
-        setError("Cannot send message: AI context is missing. Please refresh or try again.");
-        // Remove the prematurely added user message if send fails early
-        setChatMessages(prev => prev.slice(0, -1));
-        setIsSendingMessage(false);
+  const handleStartFollowUp = () => {
+    if (!currentCaseId || !lastAiResponseId) {
+      setError("Cannot start follow-up: Case ID or initial context is missing.");
+      return;
+    }
+    if (wsClient && wsClient.readyState === WebSocket.OPEN) {
+        console.log("WebSocket already open.");
+        setIsFollowUpMode(true); // Ensure mode is set
         return;
-      }
+    }
 
-      const aiResponse = await followUpChat({
-        case_id: currentCaseId,
-        response_id: lastAiResponseId, // Send the ID of the last AI message
-        user_message: userMessageText,
-      });
+    // Determine WebSocket protocol based on window.location.protocol
+    const wsProtocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+    // Use window.location.host for host and port, assuming backend is on same host or proxied.
+    // For local dev, direct port might be needed if proxy doesn't handle WS.
+    // For now, using localhost:8000 as per original plan for backend.
+    // This needs to be configurable for deployment.
+    const backendHost = process.env.NEXT_PUBLIC_WS_BACKEND_HOST || "localhost:8000";
 
-      setChatMessages((prevMessages) => [
-        ...prevMessages,
-        { sender: "ai", text: aiResponse.ai_message, id: aiResponse.response_id },
-      ]);
-      setLastAiResponseId(aiResponse.response_id); // Update with the new response ID
-    } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : "Failed to send message or get AI response.";
-      setError(errorMessage);
-      // Optionally, add an error message to the chat UI or allow resend
-      // For now, we keep the user's message in the chat and show a general error.
-      // If the error is critical, one might remove the user's message or add a specific error bubble.
-       setChatMessages(prev => [...prev, {sender: "ai", text: `Error: ${errorMessage}. Please try again.`}]);
-    } finally {
-      setIsSendingMessage(false);
+    const wsUrl = `${wsProtocol}//${backendHost}/ws/chat/${currentCaseId}/${lastAiResponseId}`; // Reverted to original URL
+    
+    console.log(`Attempting to connect to WebSocket: ${wsUrl}`); // Reverted log message
+    
+    const newWs = new WebSocket(wsUrl);
+    setWsClient(newWs);
+    setIsFollowUpMode(true);
+    setShowFollowUpButton(false); // Hide button once follow-up starts
+    setIsSendingMessage(true); // Disable input until connection is established
+    setError(null);
+  };
+
+
+  const onSend = async () => {
+    if (inputValue.trim() === "" || isSendingMessage) return;
+    const userMessageText = inputValue.trim();
+    setChatMessages((prevMessages) => [...prevMessages, { sender: "user", text: userMessageText }]);
+    setInputValue("");
+
+    if (isFollowUpMode && wsClient && wsClient.readyState === WebSocket.OPEN) {
+      setError(null); // Clear previous errors on new send attempt
+      wsClient.send(userMessageText);
+      setIsSendingMessage(true); // Disable input while waiting for AI response via WebSocket
+    } else if (isFollowUpMode) {
+      setError("Follow-up session not active or WebSocket not connected. Please try starting the follow-up session.");
+      // Re-add user message to input if send failed before WS connection
+      setInputValue(userMessageText);
+      setChatMessages(prev => prev.slice(0, -1)); // Remove optimistic user message
+    } else {
+      // This case should not be reached if UI is managed correctly,
+      // as onSend should only be callable in follow-up mode after this change.
+      console.warn("onSend called outside of follow-up mode or without WebSocket.");
     }
   };
 
@@ -508,15 +579,15 @@ export default function InterviewPage() {
         >
           {/* Chat History */}
           <div ref={chatContainerRef} className="flex-1 p-6 overflow-y-auto space-y-4">
-            {isLoadingInitialMessage && <div className="text-center text-gray-400">Loading chat...</div>}
-            {error && <div className="text-center text-red-500 p-2 bg-red-900 rounded">{error}</div>}
-            {!isLoadingInitialMessage && !error && chatMessages.length === 0 && (
-              <div className="text-center text-gray-400">No messages yet. The AI will start the conversation.</div>
+            {isLoadingInitialMessage && <div className="text-center text-gray-400">Loading initial chat...</div>}
+            {error && !isFollowUpMode && <div className="text-center text-red-500 p-2 bg-red-900 rounded">{error}</div>}
+            {!isLoadingInitialMessage && !error && chatMessages.length === 0 && !isFollowUpMode && (
+              <div className="text-center text-gray-400">Initializing session...</div>
             )}
             <div className="flex flex-col space-y-2">
               {chatMessages.map((msg, index) => (
                 <div
-                  key={index}
+                  key={index} // Consider more stable keys if messages can be reordered/deleted
                   className={`flex ${msg.sender === "user" ? "justify-end" : "justify-start"}`}
                 >
                   <div
@@ -531,11 +602,24 @@ export default function InterviewPage() {
                 </div>
               ))}
             </div>
+             {error && isFollowUpMode && <div className="text-center text-red-500 p-2 bg-red-900 rounded mt-2">{error}</div>}
           </div>
 
-          {/* Input Area: Mic Button + ShadCN Text Input + Send Button */}
-          <div className="border-t border-gray-500 px-4 py-3 flex items-center space-x-2 bg-black">
-            {/* Mic‐icon button */}
+          {/* Follow-up Button and Input Area */}
+          <div className="border-t border-gray-500 px-4 py-3 bg-black">
+            {showFollowUpButton && !isFollowUpMode && (
+              <Button
+                onClick={handleStartFollowUp}
+                className="w-full mb-2 bg-blue-600 hover:bg-blue-500 text-white"
+                disabled={isLoadingInitialMessage || !!error || !lastAiResponseId}
+              >
+                Ask Follow-up Questions
+              </Button>
+            )}
+            {/* TODO: Add "Start Interview" button here later */}
+
+            <div className="flex items-center space-x-2">
+              {/* Mic‐icon button */}
             <button
               onClick={() => {
                 // TODO: hook up microphone / voice‐to‐text logic here
@@ -549,13 +633,27 @@ export default function InterviewPage() {
             <Input
               value={inputValue}
               onChange={(e) => setInputValue(e.target.value)}
-              placeholder={isSendingMessage ? "Sending..." : "Type your response..."}
+              placeholder={
+                !isFollowUpMode && !showFollowUpButton && !isLoadingInitialMessage ? "Click 'Ask Follow-up Questions' to start." :
+                isLoadingInitialMessage ? "Loading initial session..." :
+                isFollowUpMode && (!wsClient || wsClient.readyState !== WebSocket.OPEN) && !isSendingMessage ? "Connecting to follow-up..." :
+                isSendingMessage ? "AI is thinking..." :
+                isFollowUpMode ? "Ask your follow-up question..." :
+                "Select an option above..." // Fallback placeholder
+              }
               className="flex-1 bg-gray-900 text-white placeholder-gray-500 focus:ring-blue-500"
-              disabled={isSendingMessage || isLoadingInitialMessage || (!currentCaseId && !error)}
+              disabled={
+                isLoadingInitialMessage ||
+                (!isFollowUpMode && !showFollowUpButton) || // Disabled before initial message and button appears, or if not in follow up mode
+                (isFollowUpMode && (!wsClient || wsClient.readyState !== WebSocket.OPEN)) ||
+                isSendingMessage
+              }
               onKeyDown={(e) => {
-                if (e.key === "Enter" && !e.shiftKey) { // Send on Enter, allow Shift+Enter for new line
+                if (e.key === "Enter" && !e.shiftKey) {
                   e.preventDefault();
-                  if (!isSendingMessage) onSend();
+                  if (isFollowUpMode && wsClient && wsClient.readyState === WebSocket.OPEN && !isSendingMessage && inputValue.trim() !== "") {
+                    onSend();
+                  }
                 }
               }}
             />
@@ -565,10 +663,17 @@ export default function InterviewPage() {
               variant="default"
               onClick={onSend}
               className="bg-gray-600 hover:bg-gray-500 text-white"
-              disabled={isSendingMessage || isLoadingInitialMessage || !currentCaseId || (!!error && chatMessages.length === 0)}
+              disabled={
+                isLoadingInitialMessage ||
+                !isFollowUpMode ||
+                !wsClient || wsClient.readyState !== WebSocket.OPEN ||
+                isSendingMessage ||
+                inputValue.trim() === ""
+              }
             >
-              {isSendingMessage ? "Sending..." : "Send"}
+              {isSendingMessage ? "..." : "Send"}
             </Button>
+            </div>
           </div>
         </ResizablePanel>
       </ResizablePanelGroup>

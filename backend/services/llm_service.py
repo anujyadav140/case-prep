@@ -42,6 +42,7 @@ async def get_ai_response_initial(
     """   
     input = f"Current case context: {current_case_context}"
     try:
+        # Removed await, as client.responses.create is synchronous with the standard OpenAI client
         response = client.responses.create(
             model=model,
             input= input,
@@ -92,7 +93,7 @@ async def get_ai_response_follow_up(
         response_id: str, // either from the previous response or from the gen_ai_response_initial function
         instructions: str,
         curr_message: str,
-        model: str = "gpt-4.1-mini",
+        model: str = "gpt-4o-mini",
         temperature: float = 0.5,   
     Returns:
         Dict[str, str]: A dictionary containing the response_id and the ai_message
@@ -102,7 +103,8 @@ async def get_ai_response_follow_up(
     else:
         input = [{"role": "user", "content": curr_message}]
     try:
-        response = await client.responses.create(
+        # Removed await
+        response = client.responses.create(
             model=model,
             previous_response_id=response_id,
             input=input,
@@ -150,7 +152,8 @@ async def gen_ai_response_question(
     """
     input = [{"role": "user", "content": question}, {"role": "user", "content": answer}] # ig question and answer are not to be provided with role as user, will see later
     try:
-        response = await client.responses.create(
+        # Removed await
+        response = client.responses.create(
             model=model,
             previous_response_id=response_id,
             input=input,
@@ -189,7 +192,8 @@ async def gen_ai_response_answer(
     """
     input = [{"role": "user", "content": question}, {"role": "user", "content": answer}]
     try:
-        response = await client.responses.create(
+        # Removed await
+        response = client.responses.create(
             model=model,
             previous_response_id=response_id,
             input=input,
@@ -222,7 +226,8 @@ async def gen_ai_response_analysis(
     """
     input = [{"role": "user", "content": question}, {"role": "user", "content": answer}]
     try:
-        response = await client.responses.create(
+        # Removed await
+        response = client.responses.create(
             model=model,
             previous_response_id=response_id,
             input=input,

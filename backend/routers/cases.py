@@ -12,7 +12,7 @@ async def get_cases():
     """
     return cases
 
-@router.get("/cases/{case_id}", response_model=CaseInterview)
+@router.get("/{case_id}", response_model=CaseInterview)
 async def get_case(case_id: str):
     """
     Returns a specific McKinsey case interview by ID.

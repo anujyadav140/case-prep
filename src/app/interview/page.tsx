@@ -5,7 +5,7 @@ import * as React from "react";
 import { useState, useEffect, useRef } from "react"; // Added useRef
 import { useRouter } from "next/navigation"; // Added useRouter
 import { SlashIcon, ChevronLeftIcon, ChevronRightIcon } from "lucide-react";
-import { initiateChatSession, AIResponseMessage } from "@/lib/api"; // followUpChat removed
+import { initiateChatSession, AIResponseMessage, getCase, Case } from "@/lib/api";
 
 import {
   ResizableHandle,
@@ -76,7 +76,7 @@ export default function InterviewPage() {
   const router = useRouter();
   // State for the chat input:
   const [inputValue, setInputValue] = React.useState("");
-  const [currentCaseId, setCurrentCaseId] = useState<string | null>(null);
+  const [currentCase, setCurrentCase] = useState<Case | null>(null);
   const [chatMessages, setChatMessages] = useState<Array<{ sender: "user" | "ai"; text: string; id?: string }>>([]);
   const [isLoadingInitialMessage, setIsLoadingInitialMessage] = useState(true);
   const [isSendingMessage, setIsSendingMessage] = useState(false); // To disable input while sending
@@ -87,12 +87,13 @@ export default function InterviewPage() {
   // WebSocket related state
   const [wsClient, setWsClient] = useState<WebSocket | null>(null);
   const [isFollowUpMode, setIsFollowUpMode] = useState(false);
-  const [showFollowUpButton, setShowFollowUpButton] = useState(false);
+  const [showFollowUpButton, setShowFollowUpButton] = useState(true);
 
 
   // Timer state
-  const [timeLeft, setTimeLeft] = useState<number>(15 * 60); // 15 minutes in seconds
+  const [timeLeft, setTimeLeft] = useState<number>(1 * 60); // 1 minute in seconds
   const [timerActive, setTimerActive] = useState<boolean>(false);
+  const [showProceedDialog, setShowProceedDialog] = useState(false);
 
 
   // State to track which font family/size is active:
@@ -106,29 +107,30 @@ export default function InterviewPage() {
   useEffect(() => {
     const caseId = localStorage.getItem("selectedCaseId");
     if (caseId) {
-      setCurrentCaseId(caseId);
-      const fetchInitialMessage = async () => {
+      const fetchCaseAndInitiateChat = async () => {
         try {
           setIsLoadingInitialMessage(true);
           setError(null);
+
+          // Fetch case data
+          const caseData = await getCase(caseId);
+          setCurrentCase(caseData);
+
+          // Initiate chat
           const initialResponse = await initiateChatSession(caseId);
           setChatMessages([{ sender: "ai", text: initialResponse.ai_message, id: initialResponse.response_id }]);
           setLastAiResponseId(initialResponse.response_id);
-          setShowFollowUpButton(true); // Show button after initial message
         } catch (err) {
-          setError(err instanceof Error ? err.message : "Failed to load initial chat message.");
-          setChatMessages([]); // Clear messages on error
+          setError(err instanceof Error ? err.message : "Failed to load case or initiate chat.");
+          setChatMessages([]);
         } finally {
           setIsLoadingInitialMessage(false);
         }
       };
-      fetchInitialMessage();
+      fetchCaseAndInitiateChat();
     } else {
-      // Handle case where no caseId is found, e.g., redirect or show error
       setError("No case selected. Please go back and select a case.");
       setIsLoadingInitialMessage(false);
-      // Optionally redirect:
-      // router.push('/');
     }
   }, [router]);
 
@@ -138,7 +140,7 @@ export default function InterviewPage() {
     if (!timerActive || timeLeft <= 0) {
       if (timeLeft <= 0 && timerActive) {
         setTimerActive(false); // Stop timer when time is up
-        // Optionally, add a message to chat or trigger other actions
+        setShowProceedDialog(true); // Show dialog when timer ends
         setChatMessages(prev => [...prev, { sender: "ai", text: "Follow-up time has ended."}]);
         if (wsClient && wsClient.readyState === WebSocket.OPEN) {
             // wsClient.close(1000, "Timer ended"); // Optionally close WS
@@ -255,6 +257,7 @@ export default function InterviewPage() {
       setCurrentFontFamily(attrs.fontFamily || "");
       setCurrentFontSize(attrs.fontSize || "");
     },
+    immediatelyRender: false,
   });
 
   const formatTime = (totalSeconds: number): string => {
@@ -266,7 +269,7 @@ export default function InterviewPage() {
 
   // Handler for "Send" button in chat:
   const handleStartFollowUp = () => {
-    if (!currentCaseId || !lastAiResponseId) {
+    if (!currentCase?.id || !lastAiResponseId) {
       setError("Cannot start follow-up: Case ID or initial context is missing.");
       return;
     }
@@ -284,7 +287,7 @@ export default function InterviewPage() {
     // This needs to be configurable for deployment.
     const backendHost = process.env.NEXT_PUBLIC_WS_BACKEND_HOST || "localhost:8000";
 
-    const wsUrl = `${wsProtocol}//${backendHost}/ws/chat/${currentCaseId}/${lastAiResponseId}`; // Reverted to original URL
+    const wsUrl = `${wsProtocol}//${backendHost}/ws/chat/${currentCase.id}/${lastAiResponseId}`;
     
     console.log(`Attempting to connect to WebSocket: ${wsUrl}`); // Reverted log message
     
@@ -294,8 +297,13 @@ export default function InterviewPage() {
     setShowFollowUpButton(false); // Hide button once follow-up starts
     setIsSendingMessage(true); // Disable input until connection is established
     setError(null);
-    setTimeLeft(15 * 60); // Reset and start timer
+    setTimeLeft(1 * 60); // Reset and start timer
     setTimerActive(true);
+  };
+
+  const handleProceedToInterview = () => {
+    setTimerActive(false);
+    setShowProceedDialog(true);
   };
 
 
@@ -361,11 +369,19 @@ export default function InterviewPage() {
     setCurrentQuestion((prev) => Math.max(prev - 1, 1));
   };
   const showNextQuestion = () => {
-    setCurrentQuestion((prev) => Math.min(prev + 1, 3));
+    if (currentCase) {
+      setCurrentQuestion((prev) => Math.min(prev + 1, currentCase.description.questions.length));
+    }
   };
 
-  // If desired: reset or load content when question changes
-  // For now, we keep the same editor content per question
+  useEffect(() => {
+    if (editor && currentCase?.description.questions.length) {
+      const question = currentCase.description.questions[currentQuestion - 1];
+      if (question) {
+        editor.commands.setContent(`<p>${question.text}</p>`);
+      }
+    }
+  }, [currentQuestion, currentCase, editor]);
 
   return (
     <div className="h-screen flex flex-col bg-black text-white">
@@ -376,7 +392,7 @@ export default function InterviewPage() {
           <div className="text-right">
             <span className="text-sm text-gray-400">Follow Up Timer</span>
             <div
-              className={`text-lg font-semibold ${timeLeft < 5 * 60 ? 'text-red-500' : 'text-green-500'}`}
+              className={`text-lg font-semibold ${timeLeft < 1 * 60 ? 'text-red-500' : 'text-green-500'}`}
             >
               {formatTime(timeLeft)}
             </div>
@@ -522,54 +538,29 @@ export default function InterviewPage() {
           <div className="bg-gray-800 border-b border-gray-700 p-3">
             <Breadcrumb>
               <BreadcrumbList>
-                <BreadcrumbItem>
-                  <BreadcrumbLink asChild>
-                    <button
-                      onClick={() => setCurrentQuestion(1)}
-                      className={`px-1 ${
-                        currentQuestion === 1
-                          ? "text-white font-medium"
-                          : "text-gray-300 hover:text-white"
-                      }`}
-                    >
-                      Question 1
-                    </button>
-                  </BreadcrumbLink>
-                </BreadcrumbItem>
-                <BreadcrumbSeparator>
-                  <SlashIcon className="text-gray-500" />
-                </BreadcrumbSeparator>
-                <BreadcrumbItem>
-                  <BreadcrumbLink asChild>
-                    <button
-                      onClick={() => setCurrentQuestion(2)}
-                      className={`px-1 ${
-                        currentQuestion === 2
-                          ? "text-white font-medium"
-                          : "text-gray-300 hover:text-white"
-                      }`}
-                    >
-                      Question 2
-                    </button>
-                  </BreadcrumbLink>
-                </BreadcrumbItem>
-                <BreadcrumbSeparator>
-                  <SlashIcon className="text-gray-500" />
-                </BreadcrumbSeparator>
-                <BreadcrumbItem>
-                  <BreadcrumbLink asChild>
-                    <button
-                      onClick={() => setCurrentQuestion(3)}
-                      className={`px-1 ${
-                        currentQuestion === 3
-                          ? "text-white font-medium"
-                          : "text-gray-300 hover:text-white"
-                      }`}
-                    >
-                      Question 3
-                    </button>
-                  </BreadcrumbLink>
-                </BreadcrumbItem>
+                {currentCase?.description.questions.map((q, index) => (
+                  <React.Fragment key={index}>
+                    <BreadcrumbItem>
+                      <BreadcrumbLink asChild>
+                        <button
+                          onClick={() => setCurrentQuestion(index + 1)}
+                          className={`px-1 ${
+                            currentQuestion === index + 1
+                              ? "text-white font-medium"
+                              : "text-gray-300 hover:text-white"
+                          }`}
+                        >
+                          {`Question ${index + 1}`}
+                        </button>
+                      </BreadcrumbLink>
+                    </BreadcrumbItem>
+                    {index < currentCase.description.questions.length - 1 && (
+                      <BreadcrumbSeparator>
+                        <SlashIcon className="text-gray-500" />
+                      </BreadcrumbSeparator>
+                    )}
+                  </React.Fragment>
+                ))}
               </BreadcrumbList>
             </Breadcrumb>
           </div>
@@ -598,9 +589,9 @@ export default function InterviewPage() {
               </button>
               <button
                 onClick={showNextQuestion}
-                disabled={currentQuestion === 3}
+                disabled={!currentCase || currentQuestion === currentCase.description.questions.length}
                 className={`flex items-center px-3 py-1 rounded ${
-                  currentQuestion === 3
+                  !currentCase || currentQuestion === currentCase.description.questions.length
                     ? "bg-gray-700 text-gray-400 cursor-not-allowed"
                     : "bg-gray-600 hover:bg-gray-500 text-white"
                 }`}
@@ -653,15 +644,24 @@ export default function InterviewPage() {
           {/* Follow-up Button and Input Area */}
           <div className="border-t border-gray-500 px-4 py-3 bg-black">
             {showFollowUpButton && !isFollowUpMode && (
-              <Button
-                onClick={handleStartFollowUp}
-                className="w-full mb-2 bg-blue-600 hover:bg-blue-500 text-white"
-                disabled={isLoadingInitialMessage || !!error || !lastAiResponseId}
-              >
-                Ask Follow-up Questions
-              </Button>
+              <div className="flex flex-col gap-2 mb-2">
+                <Button
+                  onClick={handleStartFollowUp}
+                  className="w-full bg-blue-600 hover:bg-blue-500 text-white"
+                  disabled={isLoadingInitialMessage || !!error || !lastAiResponseId}
+                >
+                  Ask Follow-up Questions
+                </Button>
+                <Button
+                  onClick={handleProceedToInterview}
+                  variant="success"
+                  className="w-full"
+                  disabled={isLoadingInitialMessage || !!error}
+                >
+                  Directly Proceed to interview
+                </Button>
+              </div>
             )}
-            {/* TODO: Add "Start Interview" button here later */}
 
             <div className="flex items-center space-x-2">
               {/* Mic‐icon button */}
@@ -719,9 +719,41 @@ export default function InterviewPage() {
               {isSendingMessage ? "..." : "Send"}
             </Button>
             </div>
+            {timerActive && (
+              <div className="mt-2">
+                <Button
+                  onClick={handleProceedToInterview}
+                  variant="success"
+                  size="sm"
+                  className="w-full"
+                >
+                  Proceed to interview
+                </Button>
+              </div>
+            )}
           </div>
         </ResizablePanel>
       </ResizablePanelGroup>
+      <AlertDialog open={showProceedDialog} onOpenChange={setShowProceedDialog}>
+        <AlertDialogContent className="bg-black text-white p-6 rounded-lg shadow-lg">
+          <AlertDialogHeader>
+            <AlertDialogTitle className="text-xl font-semibold">
+              Proceed to Interview?
+            </AlertDialogTitle>
+          </AlertDialogHeader>
+          <AlertDialogFooter className="mt-6 flex justify-end space-x-3">
+            <AlertDialogAction asChild>
+              <Button variant="success" onClick={() => {
+                setShowProceedDialog(false);
+                setShowFollowUpButton(false);
+                setTimerActive(false);
+              }}>
+                Yes
+              </Button>
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

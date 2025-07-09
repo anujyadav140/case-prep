@@ -7,6 +7,7 @@ export interface Case {
     client_name: string;
     client_goal: string;
     situation_description: string;
+    questions: { text: string }[];
   };
 }
 
@@ -25,6 +26,14 @@ export const getCases = async (): Promise<Case[]> => {
   const res = await fetch(`${API_BASE_URL}/cases`);
   if (!res.ok) {
     throw new Error("Failed to fetch cases");
+  }
+  return res.json();
+};
+
+export const getCase = async (caseId: string): Promise<Case> => {
+  const res = await fetch(`${API_BASE_URL}/cases/${caseId}`);
+  if (!res.ok) {
+    throw new Error(`Failed to fetch case ${caseId}`);
   }
   return res.json();
 };

@@ -89,7 +89,22 @@ cases: List[CaseInterview] = [
                 reveal_answer=(
                     "Payback period = €150 M investment ÷ €120 M annual profit = 1.25 years (one year and three months)."
                 )
-            )
+            ),
+            Question(
+                text=(
+                    "What are the potential risks of this initiative?"
+                ),
+                hints=[
+                    "Consider both internal and external factors that could impact the success of the initiative."
+                ],
+                reveal_answer=(
+                    "Possible risks include:\n"
+                    "- **Customer adoption:** Will customers embrace virtual advisors?\n"
+                    "- **Brand reputation:** Could negative online reviews harm Beautify’s image?\n"
+                    "- **Operational challenges:** Can current staff adapt to new roles effectively?\n"
+                    "- **Financial risks:** What if the expected revenue growth does not materialize?"
+                )
+            ),
         ]
     )
 ),

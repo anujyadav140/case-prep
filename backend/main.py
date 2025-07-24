@@ -5,7 +5,10 @@ from backend.services.llm_service import get_ai_response_follow_up # For the mov
 import yaml # For loading prompts
 
 app = FastAPI(title="Case Interviews API")
-
+origins = [
+    "http://localhost:3000",
+    "http://172.28.16.1:3000",     # <-- add your Docker/host IP here
+]
 # Load prompts for WebSocket endpoint if they are not globally accessible
 # This duplicates loading from chat.py, consider a shared config/loader later
 with open("backend/prompts.yaml", 'r') as f:

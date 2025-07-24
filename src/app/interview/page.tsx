@@ -1,4 +1,3 @@
-// app/interview/page.tsx
 "use client";
 
 import * as React from "react";
@@ -56,16 +55,20 @@ export default function InterviewPage() {
   const [isSendingMessage, setIsSendingMessage] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [lastAiResponseId, setLastAiResponseId] = useState<string>();
-  const chatContainerRef = useRef<HTMLDivElement>(null);
 
   // WebSocket / follow‑up
   const [wsClient, setWsClient] = useState<WebSocket | null>(null);
   const [isFollowUpMode, setIsFollowUpMode] = useState(false);
   const [showFollowUpButton, setShowFollowUpButton] = useState(true);
 
-  // Timer
-  const [timeLeft, setTimeLeft] = useState(60);
+  // Timer (follow‑up: 5‑minute countdown)
+  const [timeLeft, setTimeLeft] = useState(300);
   const [timerActive, setTimerActive] = useState(false);
+
+  // Interview timer (5‑minute countdown)
+  const [interviewTimeLeft, setInterviewTimeLeft] = useState(300);
+  const [interviewTimerActive, setInterviewTimerActive] = useState(false);
+
   const [showProceedDialog, setShowProceedDialog] = useState(false);
 
   // → Proceed‑to‑Interview / Editor mode
@@ -165,20 +168,43 @@ export default function InterviewPage() {
     })();
   }, [router]);
 
-  // ── Timer logic ──
+  // ── Follow‑up timer logic ──
   useEffect(() => {
     if (!timerActive) return;
     if (timeLeft <= 0) {
       setTimerActive(false);
       setShowProceedDialog(true);
-      setChatMessages((p) => [...p, { sender: "ai", text: "Follow‑up time has ended." }]);
+      setChatMessages((p) => [...p, { sender: "ai", text: "Time is up." }]);
       return;
     }
     const id = setInterval(() => setTimeLeft((t) => t - 1), 1000);
     return () => clearInterval(id);
   }, [timerActive, timeLeft]);
 
+  // ── Interview timer start/stop ──
+  useEffect(() => {
+    if (proceedToInterviewMode) {
+      setInterviewTimeLeft(300);
+      setInterviewTimerActive(true);
+    } else {
+      setInterviewTimerActive(false);
+    }
+  }, [proceedToInterviewMode]);
+
+  // ── Interview timer countdown ──
+  useEffect(() => {
+    if (!interviewTimerActive) return;
+    if (interviewTimeLeft <= 0) {
+      setInterviewTimerActive(false);
+      setChatMessages((p) => [...p, { sender: "ai", text: "Interview time is up." }]);
+      return;
+    }
+    const id = setInterval(() => setInterviewTimeLeft((t) => t - 1), 1000);
+    return () => clearInterval(id);
+  }, [interviewTimerActive, interviewTimeLeft]);
+
   // ── Auto‑scroll chat ──
+  const chatContainerRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (chatContainerRef.current) {
       chatContainerRef.current.scrollTop = chatContainerRef.current.scrollHeight;
@@ -229,6 +255,12 @@ export default function InterviewPage() {
       .map((n) => String(n).padStart(2, "0"))
       .join(":");
 
+  const formatInterviewTime = (secs: number) => {
+    const m = String(Math.floor(secs / 60)).padStart(2, "0");
+    const s = String(secs % 60).padStart(2, "0");
+    return `${m}:${s} minutes left`;
+  };
+
   const handleStartFollowUp = () => {
     if (!currentCase?.id || !lastAiResponseId) {
       setError("Missing case ID or context for follow‑up.");
@@ -242,7 +274,7 @@ export default function InterviewPage() {
     setShowFollowUpButton(false);
     setIsSendingMessage(true);
     setError(null);
-    setTimeLeft(60);
+    setTimeLeft(300);
     setTimerActive(true);
   };
 
@@ -275,12 +307,30 @@ export default function InterviewPage() {
         <a href="/">
           <h2 className="text-lg font-semibold">Case Interview Chat</h2>
         </a>
-        {timerActive && (
+        {/* Show follow-up timer when not in editor mode */}
+        {!proceedToInterviewMode && timerActive && (
           <div className="text-right">
-            <span className="text-sm text-gray-400">Follow Up Timer</span>
-            <div className={`text-lg font-semibold ${timeLeft < 60 ? "text-red-500" : "text-green-500"}`}>
+            <span className="text-sm text-gray-400">Timer</span>
+            <div
+              className={`text-lg font-semibold ${
+                timeLeft <= 120 ? "text-red-500" : "text-green-500"
+              }`}
+            >
               {formatTime(timeLeft)}
             </div>
+          </div>
+        )}
+        {/* Interview timer: horizontally aligned, mm:ss format */}
+        {proceedToInterviewMode && interviewTimerActive && (
+          <div className="flex items-center space-x-2">
+            <span className="text-sm text-gray-400">Interview Timer:</span>
+            <span
+              className={`text-lg font-semibold ${
+                interviewTimeLeft <= 120 ? "text-red-500" : "text-green-500"
+              }`}
+            >
+              {formatInterviewTime(interviewTimeLeft)}
+            </span>
           </div>
         )}
       </header>
@@ -294,19 +344,33 @@ export default function InterviewPage() {
           maxSize={60}
           className="border-r border-gray-500 bg-black flex flex-col min-h-0"
         >
-          <div className={`p-4 flex-1 min-h-0 ${proceedToInterviewMode ? "flex flex-col" : "overflow-auto"}`}>
+          <div
+            className={`p-4 flex-1 min-h-0 ${
+              proceedToInterviewMode ? "flex flex-col" : "overflow-auto"
+            }`}
+          >
             {proceedToInterviewMode ? (
-              <Editor className="flex-1 h-full" value={editorContent} onTextChange={e => setEditorContent(e.htmlValue ?? "")} />
+              <Editor
+                className="flex-1 h-full"
+                value={editorContent}
+                onTextChange={(e) =>
+                  setEditorContent(e.htmlValue ?? "")
+                }
+              />
             ) : isLoadingInitialMessage ? (
               <div className="flex items-center justify-center h-full">
                 <div className="animate-spin rounded-full h-10 w-10 border-4 border-blue-500 border-t-transparent" />
               </div>
             ) : (
               <Accordion type="single" collapsible className="w-full space-y-2">
-                {accordionSections.map(sec => (
+                {accordionSections.map((sec) => (
                   <AccordionItem key={sec.value} value={sec.value}>
-                    <AccordionTrigger className="text-lg md:text-xl">{sec.title}</AccordionTrigger>
-                    <AccordionContent className="text-base md:text-lg">{sec.content}</AccordionContent>
+                    <AccordionTrigger className="text-lg md:text-xl">
+                      {sec.title}
+                    </AccordionTrigger>
+                    <AccordionContent className="text-base md:text-lg">
+                      {sec.content}
+                    </AccordionContent>
                   </AccordionItem>
                 ))}
               </Accordion>
@@ -317,7 +381,12 @@ export default function InterviewPage() {
         <ResizableHandle />
 
         {/* Right Panel */}
-        <ResizablePanel defaultSize={40} minSize={40} maxSize={40} className="flex flex-col bg-black">
+        <ResizablePanel
+          defaultSize={40}
+          minSize={40}
+          maxSize={40}
+          className="flex flex-col bg-black"
+        >
           {/* breadcrumbs */}
           {proceedToInterviewMode && questions.length > 0 && (
             <div className="border-b border-gray-600 bg-gray-900 px-4 py-2">
@@ -339,7 +408,9 @@ export default function InterviewPage() {
                           </button>
                         </BreadcrumbLink>
                       </BreadcrumbItem>
-                      {i < questions.length - 1 && <BreadcrumbSeparator />}
+                      {i < questions.length - 1 && (
+                        <BreadcrumbSeparator />
+                      )}
                     </React.Fragment>
                   ))}
                 </BreadcrumbList>
@@ -348,26 +419,53 @@ export default function InterviewPage() {
           )}
 
           {/* question text */}
-          {proceedToInterviewMode && questions[currentQuestionIndex] && (
-            <div className="px-4 py-3 bg-gray-800 border-b border-gray-700">
-              <h3 className="text-white text-lg font-semibold">Question {currentQuestionIndex + 1}</h3>
-              <p className="mt-1 text-gray-200">{questions[currentQuestionIndex].text}</p>
-            </div>
-          )}
+          {proceedToInterviewMode &&
+            questions[currentQuestionIndex] && (
+              <div className="px-4 py-3 bg-gray-800 border-b border-gray-700">
+                <h3 className="text-white text-lg font-semibold">
+                  Question {currentQuestionIndex + 1}
+                </h3>
+                <p className="mt-1 text-gray-200">
+                  {questions[currentQuestionIndex].text}
+                </p>
+              </div>
+            )}
 
           {/* chat */}
-          <div ref={chatContainerRef} className="flex-1 p-6 overflow-y-auto space-y-4">
-            {isLoadingInitialMessage && <div className="text-center text-gray-400">Loading initial chat...</div>}
+          <div
+            ref={chatContainerRef}
+            className="flex-1 p-6 overflow-y-auto space-y-4"
+          >
+            {isLoadingInitialMessage && (
+              <div className="text-center text-gray-400">
+                Loading initial chat...
+              </div>
+            )}
             {error && !isFollowUpMode && (
-              <div className="text-center text-red-500 p-2 bg-red-900 rounded">{error}</div>
+              <div className="text-center text-red-500 p-2 bg-red-900 rounded">
+                {error}
+              </div>
             )}
             <div className="flex flex-col space-y-2">
               {chatMessages.map((msg, i) => (
-                <div key={i} className={`flex ${msg.sender === "user" ? "justify-end" : "justify-start"}`}>
-                  <div className={`px-4 py-2 rounded-lg shadow-sm max-w-xs md:max-w-md ${
-                      msg.sender === "user" ? "bg-gray-700" : "bg-gray-800"
-                    }`}>
-                    <span className="whitespace-pre-wrap">{msg.text}</span>
+                <div
+                  key={i}
+                  className={`flex ${
+                    msg.sender === "user"
+                      ? "justify-end"
+                      : "justify-start"
+                  }`}
+                >
+                  <div
+                    className={`px-4 py-2 rounded-lg shadow-sm max-w-xs md:max-w-md ${
+                      msg.sender === "user"
+                        ? "bg-gray-700"
+                        : "bg-gray-800"
+                    }`}
+                  >
+                    <span className="whitespace-pre-wrap">
+                      {msg.text}
+                    </span>
                   </div>
                 </div>
               ))}
@@ -381,7 +479,9 @@ export default function InterviewPage() {
                 <Button
                   onClick={handleStartFollowUp}
                   className="w-full bg-blue-600 hover:bg-blue-500"
-                  disabled={isLoadingInitialMessage || !!error || !lastAiResponseId}
+                  disabled={
+                    isLoadingInitialMessage || !!error || !lastAiResponseId
+                  }
                 >
                   Ask Follow‑up Questions
                 </Button>
@@ -402,7 +502,7 @@ export default function InterviewPage() {
               </button>
               <Input
                 value={inputValue}
-                onChange={e => setInputValue(e.target.value)}
+                onChange={(e) => setInputValue(e.target.value)}
                 placeholder={
                   isLoadingInitialMessage
                     ? "Loading..."
@@ -415,11 +515,12 @@ export default function InterviewPage() {
                 disabled={
                   isLoadingInitialMessage ||
                   (!isFollowUpMode && showFollowUpButton) ||
-                  (isFollowUpMode && (!wsClient || wsClient.readyState !== WebSocket.OPEN)) ||
+                  (isFollowUpMode &&
+                    (!wsClient || wsClient.readyState !== WebSocket.OPEN)) ||
                   isSendingMessage
                 }
                 className="flex-1 bg-gray-900 placeholder-gray-500 focus:ring-blue-500"
-                onKeyDown={e => {
+                onKeyDown={(e) => {
                   if (e.key === "Enter" && !e.shiftKey) {
                     e.preventDefault();
                     onSend();
@@ -444,7 +545,12 @@ export default function InterviewPage() {
 
             {timerActive && (
               <div className="mt-2">
-                <Button variant="success" size="sm" className="w-full" onClick={handleProceedToInterview}>
+                <Button
+                  variant="success"
+                  size="sm"
+                  className="w-full"
+                  onClick={handleProceedToInterview}
+                >
                   Proceed to Interview
                 </Button>
               </div>
@@ -453,7 +559,10 @@ export default function InterviewPage() {
         </ResizablePanel>
       </ResizablePanelGroup>
 
-      <AlertDialog open={showProceedDialog} onOpenChange={setShowProceedDialog}>
+      <AlertDialog
+        open={showProceedDialog}
+        onOpenChange={setShowProceedDialog}
+      >
         <AlertDialogContent className="bg-black text-white p-6 rounded-lg shadow-lg">
           <AlertDialogHeader>
             <AlertDialogTitle>Proceed to Interview?</AlertDialogTitle>
@@ -473,7 +582,9 @@ export default function InterviewPage() {
               </Button>
             </AlertDialogAction>
             <AlertDialogCancel asChild>
-              <Button variant="outline" className="text-black">No</Button>
+              <Button variant="outline" className="text-white">
+                No
+              </Button>
             </AlertDialogCancel>
           </AlertDialogFooter>
         </AlertDialogContent>

@@ -38,6 +38,6 @@ Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/bui
 
 1. Make venv in root dir -> `python -m venv venv`
 2. Activate the venv 
-3. `pip install -r backend/requirements.txt`
+3. `pip install -r backend/requirements.txt && pip install uvicorn`
 4. to start backend => `uvicorn backend.main:app --reload --ws websockets --host 0.0.0.0 --port 8000` in root dir
 5. to start frontend => `npm run dev`

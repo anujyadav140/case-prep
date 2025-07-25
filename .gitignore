@@ -46,3 +46,35 @@ venv
 .venv*
 
 
+
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+ENV/
+venv/
+ENV/
+venv.bak/
+venv.bak/       
+venv3/
+venv3.bak/
+*.egg-info/
+*.egg
+.eggs/
+dist/
+build/
+pip-log.txt
+pip-delete-this-directory.txt
+pip-selfcheck.json
+__pycache__/
+*.py[cod]
+.venv/
+*.venv/
+*.env
+*.env.local
+*.env.development.local
+*.env.test.local
+*.env.production.local
+.env.local  
